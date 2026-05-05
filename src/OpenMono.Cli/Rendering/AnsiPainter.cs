@@ -123,6 +123,10 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
     private static partial Regex AnsiPattern();
     private static readonly Regex AnsiRe = AnsiPattern();
 
+    [GeneratedRegex(@"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")]
+    private static partial Regex HunkHeaderPattern();
+    private static readonly Regex HunkHeaderRe = HunkHeaderPattern();
+
     internal record TuiLayout(int MainW, int ConvH, int InputH, int FirstContentRow, int TabRow, int StatusRow);
 
     internal TuiLayout ComputeLayout(string bgInputText)
@@ -345,6 +349,28 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
             W(sb.ToString());
             Flush();
         }
+    }
+
+    internal void PaintPermissionLane(string title, string summary, string opt1, string opt2, string opt3, string opt4)
+    {
+        Sz();
+        var w  = _tw - _sideW;
+        var sb = new StringBuilder(512);
+
+        void Row(int offset, string text)
+        {
+            sb.Append($"{E}[{Math.Max(1, _th - offset)};1H");
+            sb.Append($"{BgInput} {PadR(text, Math.Max(0, w - 2))}{R}");
+        }
+
+        Row(6, title);
+        Row(5, summary);
+        Row(4, opt1);
+        Row(3, opt2);
+        Row(2, opt3);
+        Row(1, opt4);
+
+        lock (_writeLock) { W(sb.ToString()); Flush(); }
     }
 
     internal void ShowCtrlCBanner()
@@ -655,6 +681,60 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
 
     internal void WriteWelcome() => Paint();
 
+    internal void WriteToolContent(string toolName, string filePath, string content)
+    {
+        var filename = Path.GetFileName(filePath);
+        var allLines = content.Split('\n');
+
+        var numbered = new List<(int Num, string Text)>();
+        foreach (var line in allLines)
+        {
+            var tab = line.IndexOf('\t');
+            if (tab > 0 && int.TryParse(line[..tab], out var num))
+                numbered.Add((num, line[(tab + 1)..]));
+        }
+        if (numbered.Count == 0)
+        {
+            for (var i = 0; i < allLines.Length; i++)
+                numbered.Add((i + 1, allLines[i]));
+        }
+
+        const int MaxLines = 30;
+        var sb = new StringBuilder();
+        sb.Append($"{B}{Fw}▶ {toolName}:{R} {Fk}{filename}{R}");
+        for (var i = 0; i < Math.Min(numbered.Count, MaxLines); i++)
+        {
+            var (num, text) = numbered[i];
+            sb.Append($"\n  {Fk}{num,4}{R}  {Fw}{text}{R}");
+        }
+        if (numbered.Count > MaxLines)
+            sb.Append($"\n  {DM}{Fk}… ({numbered.Count - MaxLines} more lines){R}");
+
+        AddMessage(new Msg("content", sb.ToString()));
+        PaintConvThrottled(force: true);
+    }
+
+    internal void WriteTodos(IReadOnlyList<Session.TodoItem> todos)
+    {
+        if (todos.Count == 0) return;
+        var lines = new List<string> { $"{B}{Fw}Tasks:{R}" };
+        foreach (var todo in todos)
+        {
+            var (icon, color) = todo.Status switch
+            {
+                "completed"   => ("✓", Fg),
+                "in_progress" => ("►", Fy),
+                _             => ("○", Fk),
+            };
+            var text = todo.Status == "in_progress" && todo.ActiveForm is not null
+                ? todo.ActiveForm
+                : todo.Content;
+            lines.Add($"  {color}{icon}{R} {Fw}{text}{R}");
+        }
+        AddMessage(new Msg("sys", string.Join('\n', lines)));
+        PaintConvThrottled(force: true);
+    }
+
     internal void AddUserMessage(string text)
     {
         AddMessage(new Msg("user", text));
@@ -879,6 +959,11 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
                 var divider = $"{BgInput}{Fk}{new string('─', mainW)}{R}";
                 for (var row = oldFirstContent - 1; row < firstContentRow - 1; row++)
                     sb.Append($"{E}[{Math.Max(1, row + 1)};1H{BgMain}{new string(' ', mainW)}{R}");
+                sb.Append($"{E}[{Math.Max(1, firstContentRow - 1)};1H{divider}");
+            }
+            else if (prevRows > 0 && contentRows > prevRows)
+            {
+                var divider = $"{BgInput}{Fk}{new string('─', mainW)}{R}";
                 sb.Append($"{E}[{Math.Max(1, firstContentRow - 1)};1H{divider}");
             }
 
@@ -1213,10 +1298,13 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
 
     private void PaintCtrlCBanner(StringBuilder sb)
     {
-        var w   = _tw > 0 ? _tw : 80;
-        var msg = "  ^C  Press Ctrl+C one more time to exit";
+        var w      = _tw > 0 ? _tw : 80;
+        var mainW  = Math.Max(1, _tw - _sideW);
+        var inputH = InputContentRows(_getBgInput(), mainW) + 2;
+        var row    = Math.Max(1, _th - inputH - 2);
+        var msg    = "  ^C  Press Ctrl+C one more time to exit";
         var padded = msg.Length < w ? msg + new string(' ', w - msg.Length) : msg[..w];
-        sb.Append($"{E}[1;1H\x1b[43;30m{padded}{R}");
+        sb.Append($"{E}[{row};1H\x1b[43;30m{padded}{R}");
     }
 
     private void PaintContextWarning(StringBuilder sb)
@@ -1226,7 +1314,7 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
         var w   = _tw > 0 ? _tw : 80;
         var msg = $"  ⚠  Context {pct}% full — type /compact to summarize and free space";
         var padded = msg.Length < w ? msg + new string(' ', w - msg.Length) : msg[..w];
-        var row    = _ctrlCBannerVisible ? 2 : 1;
+        var row    = 1;
         var color  = pct >= 95 ? "\x1b[41;97m" : "\x1b[43;30m";
         sb.Append($"{E}[{row};1H{color}{padded}{R}");
     }
@@ -1371,27 +1459,73 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
                 }
                 break;
             }
+            case "content":
+            {
+                var contentLines = m.Text.Split('\n');
+                const int maxContentLines = 33;
+                for (var i = 0; i < Math.Min(contentLines.Length, maxContentLines); i++)
+                    lines.Add($"  {Fk}{contentLines[i]}{R}");
+                if (contentLines.Length > maxContentLines)
+                    lines.Add($"  {DM}{Fk}… ({contentLines.Length - maxContentLines} more lines){R}");
+                break;
+            }
             case "diff":
             {
+                const string BgAdd     = "\x1b[48;2;0;40;0m";
+                const string FgAddNum  = "\x1b[38;2;80;200;100m";
+                const string FgAddCode = "\x1b[38;2;190;255;190m";
+                const string BgRem     = "\x1b[48;2;50;0;0m";
+                const string FgRemNum  = "\x1b[38;2;210;80;80m";
+                const string FgRemCode = "\x1b[38;2;255;175;175m";
+
                 var diffLines = m.Text.Replace("\r\n", "\n").Split('\n');
-                const int maxDiffLines = 40;
+                const int maxDiffLines = 60;
                 var show = Math.Min(diffLines.Length, maxDiffLines);
                 lines.Add("");
+                var oldLine = 0;
+                var newLine = 0;
+                // w is lineW = mainW-4; PaintConvArea prepends 1 space and pads to mainW-1,
+                // so filling to w+3 inside the colored block makes the background span the full row.
+                var fullW = w + 3;
                 for (var i = 0; i < show; i++)
                 {
                     var dl = diffLines[i];
-                    string styled;
                     if (dl.StartsWith("+++") || dl.StartsWith("---"))
-                        styled = $"  {DM}{Fk}{dl}{R}";
-                    else if (dl.StartsWith("@@"))
-                        styled = $"  {Fc}{dl}{R}";
-                    else if (dl.StartsWith('+'))
-                        styled = $"  {Fg}{dl}{R}";
+                        continue;
+                    if (dl.StartsWith("@@"))
+                    {
+                        var hunk = HunkHeaderRe.Match(dl);
+                        if (hunk.Success)
+                        {
+                            oldLine = int.Parse(hunk.Groups[1].Value);
+                            newLine = int.Parse(hunk.Groups[2].Value);
+                        }
+                        lines.Add($"  {DM}{Fk}{dl}{R}");
+                        continue;
+                    }
+                    if (dl.StartsWith('+'))
+                    {
+                        var code   = dl.Length > 1 ? dl[1..] : "";
+                        var header = $" {newLine,4} +  ";
+                        var fill   = Math.Max(0, fullW - 9 - VisLen(code));
+                        lines.Add($"{BgAdd}{FgAddNum}{header}{FgAddCode}{code}{new string(' ', fill)}{R}");
+                        newLine++;
+                    }
                     else if (dl.StartsWith('-'))
-                        styled = $"  {Fr}{dl}{R}";
+                    {
+                        var code   = dl.Length > 1 ? dl[1..] : "";
+                        var header = $" {oldLine,4} -  ";
+                        var fill   = Math.Max(0, fullW - 9 - VisLen(code));
+                        lines.Add($"{BgRem}{FgRemNum}{header}{FgRemCode}{code}{new string(' ', fill)}{R}");
+                        oldLine++;
+                    }
                     else
-                        styled = $"  {Fk}{dl}{R}";
-                    lines.Add(styled);
+                    {
+                        var code = dl.Length > 0 && dl[0] == ' ' ? dl[1..] : dl;
+                        lines.Add($"  {Fk}{newLine,4}{R}     {Fk}{code}{R}");
+                        oldLine++;
+                        newLine++;
+                    }
                 }
                 if (diffLines.Length > maxDiffLines)
                     lines.Add($"  {DM}{Fk}… {diffLines.Length - maxDiffLines} more lines{R}");
