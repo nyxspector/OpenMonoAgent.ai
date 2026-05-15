@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using OpenMono.Acp;
 using OpenMono.Config;
 using OpenMono.History;
 using OpenMono.Hooks;
@@ -31,6 +32,7 @@ public sealed class ConversationLoop : IDisposable
     private readonly CursorStore _cursorStore;
     private readonly ToolResultCache _cache;
     private readonly ArtifactStore _artifactStore;
+    private readonly IAcpEventSink? _sink;
 
     private readonly DoomLoopDetector _doomLoop = new();
 
@@ -51,7 +53,8 @@ public sealed class ConversationLoop : IDisposable
         TurnJournal? journal = null,
         ToolResultCache? cache = null,
         ArtifactStore? artifactStore = null,
-        Checkpointer? checkpointer = null)
+        Checkpointer? checkpointer = null,
+        IAcpEventSink? sink = null)
     {
         _llm = llm;
         _tools = tools;
@@ -69,6 +72,7 @@ public sealed class ConversationLoop : IDisposable
         _cursorStore = new CursorStore();
         _cache = cache ?? new ToolResultCache();
         _artifactStore = artifactStore ?? ArtifactStore.ForSession(session, config.DataDirectory);
+        _sink = sink;
     }
 
     public void Dispose()
@@ -197,6 +201,7 @@ public sealed class ConversationLoop : IDisposable
                     _output.AppendThinking(chunk.ThinkingDelta);
                     thinkingStarted = true;
                     thinkingChars += chunk.ThinkingDelta.Length;
+                    if (_sink is not null) await _sink.OnThinkingDeltaAsync(chunk.ThinkingDelta);
                     continue;
                 }
 
@@ -215,8 +220,7 @@ public sealed class ConversationLoop : IDisposable
                 {
                     textBuffer.Append(chunk.TextDelta);
                     _output.StreamText(chunk.TextDelta);
-
-
+                    if (_sink is not null) await _sink.OnTextDeltaAsync(chunk.TextDelta);
                 }
 
                 if (chunk.ToolCallDelta is not null)
@@ -261,6 +265,7 @@ public sealed class ConversationLoop : IDisposable
             if (toolCalls.Count == 0)
             {
                 _journal.FinishTurn("text_only");
+                await EmitUsageAsync();
                 return;
             }
 
@@ -275,6 +280,7 @@ public sealed class ConversationLoop : IDisposable
                     Content = "[System: Doom loop detected — you called the same tools 3 times in a row with identical arguments. Stop repeating and try a different approach, or ask the user for help.]",
                 });
                 _journal.FinishTurn("doom_loop");
+                await EmitUsageAsync();
                 return;
             }
 
@@ -298,6 +304,12 @@ public sealed class ConversationLoop : IDisposable
                     ToolName = call.Name,
                     Content = content,
                 });
+
+                if (_sink is not null)
+                {
+                    var artifactId = result.Artifacts.Count > 0 ? result.Artifacts[0].Id : null;
+                    await _sink.OnToolResultPreviewAsync(call.Id, result.ModelPreview, artifactId);
+                }
             }
             if (results.Any(r => r.BreakTurn))
             {
@@ -312,12 +324,14 @@ public sealed class ConversationLoop : IDisposable
                     Content = PlanModeInstructions.PlanPresented,
                 });
                 _journal.FinishTurn("turn_break");
+                await EmitUsageAsync();
                 return;
             }
         }
 
         await ReportIterationCapAsync(maxIterations, new List<ToolCall>(), ct);
         _journal.FinishTurn("max_iterations");
+        await EmitUsageAsync();
         }
         finally
         {
@@ -462,6 +476,17 @@ public sealed class ConversationLoop : IDisposable
 
         report.RenderTo(_output.WriteInfo, promptTokens);
         _output.WriteDebug($"[Compact] Done — {_session.Messages.Count} messages remaining");
+
+        if (_sink is not null)
+            await _sink.OnCompactionAsync(report.MessagesCompressed, report.Duration.TotalSeconds, _session.Checkpoints.Count);
+    }
+
+    private Task EmitUsageAsync()
+    {
+        if (_sink is null) return Task.CompletedTask;
+        var tracker = _session.Meta.TokenTracker;
+        if (tracker is null) return Task.CompletedTask;
+        return _sink.OnUsageAsync(tracker.TotalPromptTokens, tracker.TotalCompletionTokens, tracker.TotalTokens);
     }
 
 
