@@ -754,6 +754,11 @@ public sealed class ConversationLoop : IDisposable
             _output.WriteToolStart(call.Name, call.Arguments);
             _output.WriteToolSuccess(call.Name);
             Log.Debug($"Tool cache hit: {call.Name}");
+            if (_sink is not null)
+            {
+                await _sink.OnToolStartAsync(call.Id, call.Name, SummarizeToolArgs(call.Arguments));
+                await _sink.OnToolEndAsync(call.Id, call.Name, ok: true, durationMs: 0.0);
+            }
             return cachedResult with { ModelPreview = $"[cached] {cachedResult.ModelPreview}" };
         }
 
@@ -763,13 +768,18 @@ public sealed class ConversationLoop : IDisposable
 
         _journal.RecordToolStarted(call.Id);
 
+        var toolStopwatch = Stopwatch.StartNew();
+        if (_sink is not null)
+            await _sink.OnToolStartAsync(call.Id, call.Name, SummarizeToolArgs(call.Arguments));
+
+        ToolResult result;
         try
         {
 
             await _hookRunner.RunPreToolUseHooksAsync(call.Name, call.Arguments, ct);
 
             Log.Debug($"Tool executing: {call.Name}");
-            var result = await tool.ExecuteAsync(input, context, ct);
+            result = await tool.ExecuteAsync(input, context, ct);
 
             await _hookRunner.RunPostToolUseHooksAsync(call.Name, result.Content, ct);
 
@@ -808,22 +818,39 @@ public sealed class ConversationLoop : IDisposable
                 if (result.Diff is not null)
                     _output.WriteToolDiff(result.Diff);
             }
-
-            return result;
         }
         catch (OperationCanceledException)
         {
             _journal.RecordToolCrashed(call.Id, "OperationCanceledException", "cancelled");
             Log.Info($"Tool cancelled: {call.Name}");
-            return ToolResult.Cancelled($"{call.Name} was cancelled");
+            result = ToolResult.Cancelled($"{call.Name} was cancelled");
         }
         catch (Exception ex)
         {
             _journal.RecordToolCrashed(call.Id, ex.GetType().Name, ex.Message);
             _output.WriteToolError(call.Name, ex.Message);
             Log.Error($"Tool exception: {call.Name}", ex);
-            return ToolResult.Crash($"Tool execution failed: {ex.Message}", "Try with different parameters or report this as a bug.");
+            result = ToolResult.Crash($"Tool execution failed: {ex.Message}", "Try with different parameters or report this as a bug.");
         }
+
+        toolStopwatch.Stop();
+        if (_sink is not null)
+            await _sink.OnToolEndAsync(call.Id, call.Name, ok: !result.IsError, durationMs: toolStopwatch.Elapsed.TotalMilliseconds);
+        return result;
+    }
+
+    /// <summary>
+    /// One-line summary of a tool call's arguments for the tool_start SSE event.
+    /// Truncates aggressively; the full result preview lands via tool_result_preview.
+    /// </summary>
+    private static string SummarizeToolArgs(string arguments)
+    {
+        if (string.IsNullOrEmpty(arguments)) return "";
+        var trimmed = arguments.AsSpan().Trim();
+        if (trimmed.Length == 0) return "";
+        var snippet = trimmed.Length <= 120 ? trimmed.ToString() : trimmed[..120].ToString() + "...";
+        // Collapse internal whitespace runs so multi-line JSON doesn't blow up the chat UI.
+        return string.Join(" ", snippet.Split(new[] { '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries));
     }
 
     private static string? ValidateToolInput(ITool tool, JsonElement input)

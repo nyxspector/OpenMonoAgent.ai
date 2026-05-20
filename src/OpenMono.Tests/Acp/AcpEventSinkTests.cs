@@ -109,6 +109,66 @@ public sealed class AcpEventSinkTests
         sink.ToolPreviews[0].artifactId.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Tool_start_and_end_fire_around_each_tool_execution()
+    {
+        var sink = new RecordingSink();
+        var tools = new ToolRegistry();
+        tools.Register(new PreviewTool());
+
+        var (loop, _) = BuildLoop(sink, new FakeLlm(
+            new List<StreamChunk>
+            {
+                new() { ToolCallDelta = new ToolCall { Id = "call_99", Name = "PreviewTool", Arguments = "{\"file_path\":\"src/foo.ts\"}" }, IsComplete = false },
+                new() { IsComplete = true },
+            },
+            new List<StreamChunk>
+            {
+                new() { TextDelta = "ok", IsComplete = false },
+                new() { IsComplete = true, Usage = new UsageInfo { PromptTokens = 1, CompletionTokens = 1 } },
+            }),
+            tools: tools);
+
+        await loop.RunTurnAsync("invoke", CancellationToken.None);
+
+        sink.ToolStarts.Should().ContainSingle();
+        sink.ToolStarts[0].callId.Should().Be("call_99");
+        sink.ToolStarts[0].name.Should().Be("PreviewTool");
+        sink.ToolStarts[0].summary.Should().Contain("file_path");
+
+        sink.ToolEnds.Should().ContainSingle();
+        sink.ToolEnds[0].callId.Should().Be("call_99");
+        sink.ToolEnds[0].name.Should().Be("PreviewTool");
+        sink.ToolEnds[0].ok.Should().BeTrue("PreviewTool returns ToolResult.Success");
+        sink.ToolEnds[0].durationMs.Should().BeGreaterThanOrEqualTo(0);
+    }
+
+    [Fact]
+    public async Task Tool_end_reports_ok_false_when_tool_returns_error()
+    {
+        var sink = new RecordingSink();
+        var tools = new ToolRegistry();
+        tools.Register(new AlwaysErrorTool());
+
+        var (loop, _) = BuildLoop(sink, new FakeLlm(
+            new List<StreamChunk>
+            {
+                new() { ToolCallDelta = new ToolCall { Id = "call_err", Name = "AlwaysErrorTool", Arguments = "{}" }, IsComplete = false },
+                new() { IsComplete = true },
+            },
+            new List<StreamChunk>
+            {
+                new() { TextDelta = "noted", IsComplete = false },
+                new() { IsComplete = true, Usage = new UsageInfo { PromptTokens = 1, CompletionTokens = 1 } },
+            }),
+            tools: tools);
+
+        await loop.RunTurnAsync("invoke", CancellationToken.None);
+
+        sink.ToolEnds.Should().ContainSingle();
+        sink.ToolEnds[0].ok.Should().BeFalse();
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private static (ConversationLoop loop, SessionState session) BuildLoop(
@@ -153,12 +213,18 @@ public sealed class AcpEventSinkTests
     {
         public List<string> TextDeltas { get; } = new();
         public List<string> ThinkingDeltas { get; } = new();
+        public List<(string callId, string name, string summary)> ToolStarts { get; } = new();
+        public List<(string callId, string name, bool ok, double durationMs)> ToolEnds { get; } = new();
         public List<(string callId, string preview, string? artifactId)> ToolPreviews { get; } = new();
         public List<(int input, int output, int total)> UsageEvents { get; } = new();
         public List<(int compressed, double seconds, int idx)> Compactions { get; } = new();
 
         public Task OnTextDeltaAsync(string content) { TextDeltas.Add(content); return Task.CompletedTask; }
         public Task OnThinkingDeltaAsync(string content) { ThinkingDeltas.Add(content); return Task.CompletedTask; }
+        public Task OnToolStartAsync(string callId, string name, string summary)
+        { ToolStarts.Add((callId, name, summary)); return Task.CompletedTask; }
+        public Task OnToolEndAsync(string callId, string name, bool ok, double durationMs)
+        { ToolEnds.Add((callId, name, ok, durationMs)); return Task.CompletedTask; }
         public Task OnCompactionAsync(int m, double s, int i) { Compactions.Add((m, s, i)); return Task.CompletedTask; }
         public Task OnUsageAsync(int i, int o, int t) { UsageEvents.Add((i, o, t)); return Task.CompletedTask; }
         public Task OnToolResultPreviewAsync(string callId, string preview, string? artifactId)
@@ -175,5 +241,17 @@ public sealed class AcpEventSinkTests
         public PermissionLevel RequiredPermission(JsonElement input) => PermissionLevel.AutoAllow;
         public Task<ToolResult> ExecuteAsync(JsonElement input, ToolContext ctx, CancellationToken ct)
             => Task.FromResult(ToolResult.Success("preview-payload"));
+    }
+
+    private sealed class AlwaysErrorTool : ITool
+    {
+        public string Name => "AlwaysErrorTool";
+        public string Description => "Returns ToolResult.Error to verify tool_end ok=false";
+        public bool IsConcurrencySafe => true;
+        public bool IsReadOnly => true;
+        public JsonElement InputSchema { get; } = JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone();
+        public PermissionLevel RequiredPermission(JsonElement input) => PermissionLevel.AutoAllow;
+        public Task<ToolResult> ExecuteAsync(JsonElement input, ToolContext ctx, CancellationToken ct)
+            => Task.FromResult(ToolResult.Error("nope"));
     }
 }
