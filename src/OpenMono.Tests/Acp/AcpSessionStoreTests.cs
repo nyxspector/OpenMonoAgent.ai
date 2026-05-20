@@ -193,6 +193,57 @@ public sealed class AcpSessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void Round_trip_preserves_assistant_tool_calls_and_tool_results()
+    {
+        // Ensures the JSON serializer handles the nested ToolCalls list on the
+        // assistant Message AND the ToolCallId/ToolName fields on the Tool Message.
+        // GetMessages relies on this projection to fold tool results into the
+        // chat panel's expandable rows.
+        string id;
+        using (var store = new AcpSessionStore(_cfg, _settings, startReaper: false))
+        {
+            var session = store.Create("gpt-4o", _cfg);
+            session.Messages.Add(new Message { Role = MessageRole.User, Content = "delete /tmp/x" });
+            session.Messages.Add(new Message
+            {
+                Role = MessageRole.Assistant,
+                Content = "Sure.",
+                ToolCalls = new()
+                {
+                    new ToolCall { Id = "call_1", Name = "Bash", Arguments = "{\"command\":\"rm /tmp/x\"}" },
+                },
+            });
+            session.Messages.Add(new Message
+            {
+                Role = MessageRole.Tool,
+                ToolCallId = "call_1",
+                ToolName = "Bash",
+                Content = "exit:0",
+            });
+            store.Save(session);
+            id = session.Id;
+        }
+
+        using var reloaded = new AcpSessionStore(_cfg, _settings, startReaper: false);
+        var got = reloaded.TryGet(id)!;
+
+        got.Messages.Should().HaveCount(3);
+
+        var assistant = got.Messages[1];
+        assistant.Role.Should().Be(MessageRole.Assistant);
+        assistant.ToolCalls.Should().NotBeNull().And.HaveCount(1);
+        assistant.ToolCalls![0].Id.Should().Be("call_1");
+        assistant.ToolCalls[0].Name.Should().Be("Bash");
+        assistant.ToolCalls[0].Arguments.Should().Be("{\"command\":\"rm /tmp/x\"}");
+
+        var toolMsg = got.Messages[2];
+        toolMsg.Role.Should().Be(MessageRole.Tool);
+        toolMsg.ToolCallId.Should().Be("call_1");
+        toolMsg.ToolName.Should().Be("Bash");
+        toolMsg.Content.Should().Be("exit:0");
+    }
+
+    [Fact]
     public void Delete_removes_session_from_memory_and_disk()
     {
         using var store = new AcpSessionStore(_cfg, _settings, startReaper: false);
