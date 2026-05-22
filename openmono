@@ -32,9 +32,10 @@ _OPENMONO_ARCH=$(uname -m)
 NATIVE_INFERENCE=false
 [[ "$_OPENMONO_OS" == "Darwin" && "$_OPENMONO_ARCH" == "arm64" ]] && NATIVE_INFERENCE=true
 
-# Source native llama-server helpers for macOS Apple Silicon
+# Source macOS native helpers for macOS Apple Silicon
 if [[ "$NATIVE_INFERENCE" == "true" ]]; then
-    source "$REPO_DIR/scripts/llama-native.sh"
+    source "$REPO_DIR/scripts/macos/inference.sh"
+    source "$REPO_DIR/scripts/macos/tunnel.sh"
 fi
 
 RED='\033[0;31m'
@@ -148,7 +149,7 @@ cmd_help() {
     printf "  %-14s %s\n" "tunnel stop"       "Stop the frpc tunnel"
     printf "  %-14s %s\n" "tunnel restart"    "Restart the frpc tunnel"
     printf "  %-14s %s\n" "tunnel status"     "Show tunnel state + configured target"
-    printf "  %-14s %s\n" "tunnel logs"       "Tail frpc logs (journalctl -u frpc)"
+    printf "  %-14s %s\n" "tunnel logs"       "Tail frpc logs"
     echo ""
     echo "Global flags:"
     printf "  %-14s %s\n" "--verbose, -v" "Enable verbose/debug output (forwarded to the agent)"
@@ -569,7 +570,7 @@ cmd_agent() {
         if [[ "$NATIVE_INFERENCE" == "true" ]]; then
             # macOS: ensure native Metal llama-server is running
             # shellcheck source=/dev/null
-            source "$REPO_DIR/scripts/llama-native.sh" 2>/dev/null || true
+            source "$REPO_DIR/scripts/macos/inference.sh" 2>/dev/null || true
             native_load_config || exit 1
             native_ensure_running || exit 1
         else
@@ -808,69 +809,89 @@ cmd_tunnel() {
             bash "$REPO_DIR/scripts/setup-tunnel-inference.sh" "$@"
             ;;
         start)
-            tunnel_require_systemd
-            info "Starting frpc tunnel..."
-            sudo systemctl start frpc
-            sleep 1
-            if systemctl is-active --quiet frpc; then
-                ok "frpc is active"
+            if [[ "$NATIVE_INFERENCE" == "true" ]]; then
+                macos_tunnel_cmd_start
             else
-                err "frpc failed to start. Check: openmono tunnel logs"
-                exit 1
+                tunnel_require_systemd
+                info "Starting frpc tunnel..."
+                sudo systemctl start frpc
+                sleep 1
+                if systemctl is-active --quiet frpc; then
+                    ok "frpc is active"
+                else
+                    err "frpc failed to start. Check: openmono tunnel logs"
+                    exit 1
+                fi
             fi
             ;;
         stop)
-            tunnel_require_systemd
-            info "Stopping frpc tunnel..."
-            sudo systemctl stop frpc
-            ok "Stopped"
+            if [[ "$NATIVE_INFERENCE" == "true" ]]; then
+                macos_tunnel_cmd_stop
+            else
+                tunnel_require_systemd
+                info "Stopping frpc tunnel..."
+                sudo systemctl stop frpc
+                ok "Stopped"
+            fi
             ;;
         restart)
-            tunnel_require_systemd
-            info "Restarting frpc tunnel..."
-            sudo systemctl restart frpc
-            sleep 1
-            if systemctl is-active --quiet frpc; then
-                ok "frpc is active"
+            if [[ "$NATIVE_INFERENCE" == "true" ]]; then
+                macos_tunnel_cmd_restart
             else
-                err "frpc failed to restart. Check: openmono tunnel logs"
-                exit 1
+                tunnel_require_systemd
+                info "Restarting frpc tunnel..."
+                sudo systemctl restart frpc
+                sleep 1
+                if systemctl is-active --quiet frpc; then
+                    ok "frpc is active"
+                else
+                    err "frpc failed to restart. Check: openmono tunnel logs"
+                    exit 1
+                fi
             fi
             ;;
         status)
-            echo ""
-            echo -e "${BLUE}── frpc (tunnel) service ────────────────────────────${NC}"
-            if command -v systemctl &>/dev/null \
-                && systemctl list-unit-files 2>/dev/null | grep -q '^frpc\.service'; then
-                if systemctl is-active --quiet frpc; then
-                    ok "frpc.service → active"
+            if [[ "$NATIVE_INFERENCE" == "true" ]]; then
+                macos_tunnel_cmd_status
+            else
+                echo ""
+                echo -e "${BLUE}── frpc (tunnel) service ────────────────────────────${NC}"
+                if command -v systemctl &>/dev/null \
+                    && systemctl list-unit-files 2>/dev/null | grep -q '^frpc\.service'; then
+                    if systemctl is-active --quiet frpc; then
+                        ok "frpc.service → active"
+                    else
+                        warn "frpc.service → inactive"
+                    fi
+                    systemctl --no-pager -n 3 status frpc 2>/dev/null | sed -n '1,5p' || true
                 else
-                    warn "frpc.service → inactive"
+                    warn "frpc.service not installed. Run: openmono tunnel setup"
                 fi
-                systemctl --no-pager -n 3 status frpc 2>/dev/null | sed -n '1,5p' || true
-            else
-                warn "frpc.service not installed. Run: openmono tunnel setup"
-            fi
 
-            echo ""
-            echo -e "${BLUE}── Configured target ────────────────────────────────${NC}"
-            if [[ -f /etc/frp/frpc.toml ]]; then
-                local server_addr remote_port
-                server_addr="$(awk -F'"' '/^serverAddr/{print $2; exit}' /etc/frp/frpc.toml 2>/dev/null)"
-                remote_port="$(awk -F'= *' '/^remotePort/{print $2; exit}' /etc/frp/frpc.toml 2>/dev/null | tr -d ' ')"
-                [[ -n "$server_addr" ]] && info "serverAddr = $server_addr"
-                [[ -n "$remote_port" ]] && info "remotePort = $remote_port"
-                if [[ -n "$server_addr" && -n "$remote_port" ]]; then
-                    info "Public endpoint: http://$server_addr:$remote_port"
+                echo ""
+                echo -e "${BLUE}── Configured target ────────────────────────────────${NC}"
+                if [[ -f /etc/frp/frpc.toml ]]; then
+                    local server_addr remote_port
+                    server_addr="$(awk -F'"' '/^serverAddr/{print $2; exit}' /etc/frp/frpc.toml 2>/dev/null)"
+                    remote_port="$(awk -F'= *' '/^remotePort/{print $2; exit}' /etc/frp/frpc.toml 2>/dev/null | tr -d ' ')"
+                    [[ -n "$server_addr" ]] && info "serverAddr = $server_addr"
+                    [[ -n "$remote_port" ]] && info "remotePort = $remote_port"
+                    if [[ -n "$server_addr" && -n "$remote_port" ]]; then
+                        info "Public endpoint: http://$server_addr:$remote_port"
+                    fi
+                else
+                    warn "/etc/frp/frpc.toml not found"
                 fi
-            else
-                warn "/etc/frp/frpc.toml not found"
+                echo ""
             fi
-            echo ""
             ;;
         logs)
-            tunnel_require_systemd
-            sudo journalctl -u frpc -f
+            if [[ "$NATIVE_INFERENCE" == "true" ]]; then
+                macos_tunnel_cmd_logs
+            else
+                tunnel_require_systemd
+                sudo journalctl -u frpc -f
+            fi
             ;;
         rotate-key)
             if [[ "$NATIVE_INFERENCE" == "true" ]]; then
@@ -937,21 +958,21 @@ cmd_tunnel() {
             echo "Usage: openmono tunnel <subcommand>"
             echo ""
             echo "Run on the inference box. Manages the frpc tunnel that dials your"
-            echo "openmonoagent relay. The tunnel runs as a systemd service (frpc.service)."
+            echo "OpenMono.ai relay server. On Linux, the tunnel runs as a systemd service;"
+            echo "on macOS, it runs as a Homebrew service."
             echo ""
-            echo "  setup       Install frpc + systemd unit; prompts for your relay"
-            echo "              signup values (frpsAddress, relayToken, remotePort,"
-            echo "              proxyPrefix). Preserves existing LLAMA_API_KEY."
+            echo "  setup       Install and configure frpc; prompts for relay credentials"
+            echo "              (frpsAddress, relayToken, remotePort, proxyPrefix)."
+            echo "              Preserves existing LLAMA_API_KEY."
             echo "  rotate-key  Generate a new LLAMA_API_KEY and restart llama-server."
             echo "              Use when credentials are compromised. Prints the config"
             echo "              set commands for the agent box."
-            echo "  start       systemctl start frpc"
-            echo "  stop        systemctl stop frpc"
-            echo "  restart     systemctl restart frpc"
-            echo "  status      Show frpc.service state + configured target"
-            echo "  logs        journalctl -u frpc -f"
+            echo "  start       Start the frpc tunnel"
+            echo "  stop        Stop the frpc tunnel"
+            echo "  restart     Restart the frpc tunnel"
+            echo "  status      Show tunnel state + configured target"
+            echo "  logs        Tail tunnel logs"
             echo ""
-            echo "Config file: /etc/frp/frpc.toml"
             ;;
         *)
             err "Unknown tunnel subcommand: $sub"

@@ -254,9 +254,11 @@ native_cmd_tunnel_rotate_key() {
         mkdir -p "$(dirname "$docker_env")"
         touch "$docker_env"
     fi
-    grep -v '^LLAMA_API_KEY=' "$docker_env" > /tmp/env.tmp 2>/dev/null || true
-    echo "LLAMA_API_KEY=$new_key" >> /tmp/env.tmp
-    mv /tmp/env.tmp "$docker_env"
+    local tmp
+    tmp="$(mktemp)"
+    grep -v '^LLAMA_API_KEY=' "$docker_env" > "$tmp" 2>/dev/null || true
+    echo "LLAMA_API_KEY=$new_key" >> "$tmp"
+    mv "$tmp" "$docker_env"
     chmod 0600 "$docker_env"
     ok "LLAMA_API_KEY rotated in docker/.env"
 
