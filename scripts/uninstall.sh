@@ -11,7 +11,7 @@ set -uo pipefail
 # Reverses install.sh (always) and — with --deep — install_prereqs.sh.
 #
 # What this script removes by default (safe, OpenMono-only):
-#   • llama-server + agent Docker containers (via docker compose down)
+#   • llama-server + agent + gateway + searxng + scrapling Docker containers
 #   • Locally-built / pulled images tied to the compose file
 #   • $INSTALL_DIR/docker/docker-compose.override.yml   (GPU/CPU override)
 #   • /usr/local/bin/openmono                            (CLI symlink)
@@ -353,7 +353,7 @@ fi
 
 echo ""
 printf "  ${BOLD}Will remove:${NC}\n"
-[ -n "$INSTALL_DIR" ] && printf "    • OpenMono Docker containers, images, and override file\n"
+[ -n "$INSTALL_DIR" ] && printf "    • OpenMono Docker containers (llama, agent, gateway, searxng, scrapling), images, and override file\n"
 printf "    • /usr/local/bin/openmono symlink (if writable)\n"
 printf "    • \$HOME/.openmono/ (prefs, graph-db, logs, env)\n"
 printf "    • Power profile reset to 'balanced' (if powerprofilesctl is present)\n"
@@ -393,7 +393,7 @@ if [ -n "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/docker" ] && command -v docker &>
         ok "Compose stack torn down"
 
         # Belt-and-suspenders: containers named explicitly in the compose file.
-        for c in llama-server openmono-agent; do
+        for c in llama-server openmono-agent openmono-gateway openmono-searxng openmono-scrapling; do
             if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
                 info "Force-removing leftover container: $c"
                 do_run docker rm -f "$c"
@@ -405,7 +405,9 @@ if [ -n "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/docker" ] && command -v docker &>
         for img in \
             ghcr.io/ggml-org/llama.cpp:server \
             ghcr.io/ggml-org/llama.cpp:server-cuda \
-            ghcr.io/ggml-org/llama.cpp:server-vulkan
+            ghcr.io/ggml-org/llama.cpp:server-vulkan \
+            caddy:2-alpine \
+            searxng/searxng:latest
         do
             if docker image inspect "$img" &>/dev/null 2>&1; then
                 if confirm "Remove pulled image $img?" "Y"; then

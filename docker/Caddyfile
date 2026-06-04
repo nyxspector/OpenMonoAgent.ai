@@ -43,14 +43,24 @@
 	handle /search* {
 		@noauth not header Authorization "Bearer {$LLAMA_API_KEY}"
 		respond @noauth "Unauthorized" 401
-		reverse_proxy {$SEARXNG_UPSTREAM:searxng:8080}
+		reverse_proxy {$SEARXNG_UPSTREAM:searxng:8080} {
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Port {port}
+			header_up X-Forwarded-Proto {scheme}
+		}
 	}
 
 	# Scrapling — anti-bot web scraping (backs the agent's WebFetch tool).
 	handle /scrape* {
 		@noauth_scrape not header Authorization "Bearer {$LLAMA_API_KEY}"
 		respond @noauth_scrape "Unauthorized" 401
-		reverse_proxy {$SCRAPLING_UPSTREAM:scrapling:5000}
+		reverse_proxy {$SCRAPLING_UPSTREAM:scrapling:5000} {
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Port {port}
+			header_up X-Forwarded-Proto {scheme}
+		}
 	}
 
 	# Everything else → llama-server (OpenAI-compatible API). llama enforces its
