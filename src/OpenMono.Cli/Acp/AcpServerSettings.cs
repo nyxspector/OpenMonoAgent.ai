@@ -15,6 +15,7 @@ public sealed class AcpServerSettings
 
     public bool Enabled { get; set; } = false;
     public int Port { get; set; } = 7475;
+    public bool BindAllInterfaces { get; set; } = false;
     public int SessionTtlHours { get; set; } = 24;
     public int PendingUserResponseTimeoutMinutes { get; set; } = 10;
 

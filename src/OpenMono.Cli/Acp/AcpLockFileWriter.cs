@@ -41,7 +41,7 @@ public sealed class AcpLockFileWriter
                 "HOST_WORKSPACE_PATH env var is required. The extension's DockerManager " +
                 "always sets it; a user-managed docker-compose setup must declare it too.");
         var agentId = Environment.GetEnvironmentVariable("ACP_AGENT_ID") ?? GenerateAgentId(hostWorkspace);
-        var containerId = Environment.GetEnvironmentVariable("HOSTNAME") ?? "unknown";
+        var containerId = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName;
 
         _payload = new LockPayload(
             version: "1.0.0",

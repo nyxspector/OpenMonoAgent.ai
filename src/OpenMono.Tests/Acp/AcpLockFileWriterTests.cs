@@ -150,6 +150,17 @@ public sealed class AcpLockFileWriterTests : IDisposable
         File.Exists(path).Should().BeTrue("TryRemove must only remove a file the writer itself wrote");
     }
 
+    [Fact]
+    public void ContainerId_falls_back_to_MachineName_when_HOSTNAME_missing()
+    {
+        Environment.SetEnvironmentVariable("HOST_WORKSPACE_PATH", "/ws");
+        Environment.SetEnvironmentVariable("HOSTNAME", null);
+
+        var writer = new AcpLockFileWriter(_settings, _tempMount);
+
+        writer.ContainerId.Should().Be(Environment.MachineName);
+    }
+
 
 
     private sealed class EnvSnapshot : IDisposable

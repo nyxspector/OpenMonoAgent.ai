@@ -28,7 +28,11 @@ public static class AcpServer
 
 
 
-        builder.WebHost.ConfigureKestrel(o => o.ListenAnyIP(settings.Port));
+        builder.WebHost.ConfigureKestrel(o =>
+        {
+            if (settings.BindAllInterfaces) o.ListenAnyIP(settings.Port);
+            else o.ListenLocalhost(settings.Port);
+        });
 
         builder.Services.AddSingleton(settings);
 

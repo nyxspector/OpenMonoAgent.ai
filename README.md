@@ -231,6 +231,7 @@ Settings load from `~/.openmono/settings.json` (user-level) or `.openmono/settin
 
 - [Roadmap](ROADMAP.md)
 - [Setup & commands](docs/SETUP.md) — daily commands, TUI vs classic, flags
+- **VS Code / Cursor** — chat UI over the ACP server. Start the agent in your project folder with `--acp-only --acp-port 7475` (Windows: run `./install.ps1 -Run` from this folder), then open the [OpenMono Agent](https://marketplace.visualstudio.com/publishers/StartupHakk) panel.
 - [Architecture](docs/ARCHITECTURE.md) — .NET CLI + llama.cpp + Docker, full diagram
 - [Models & reasoning mode](docs/MODELS.md)
 - [Configuration](docs/CONFIG.md) — settings.json, providers, permissions, MCP servers

@@ -224,6 +224,7 @@ static async Task RunAgentAsync(string? endpoint, string? model, string? workdir
     var acp = config.AcpServer ?? new AcpServerSettings();
     AcpHostedService? acpHost = null;
     CancellationTokenSource? acpCts = null;
+    Exception? acpStartError = null;
 
     if (acpOnly && noAcp)
     {
@@ -258,6 +259,7 @@ static async Task RunAgentAsync(string? endpoint, string? model, string? workdir
 
 
         var runningInDocker = File.Exists("/.dockerenv");
+        acp.BindAllInterfaces = runningInDocker;
 
         Environment.SetEnvironmentVariable("HOST_WORKSPACE_PATH",
             hostWorkspaceExternal ?? config.WorkingDirectory);
@@ -306,8 +308,10 @@ static async Task RunAgentAsync(string? endpoint, string? model, string? workdir
 
 
 
+            acpStartError = ex;
             renderer.WriteWarning($"ACP server failed to start: {ex.Message}");
-            renderer.WriteWarning("Continuing without ACP. Pass --no-acp to silence this on subsequent runs.");
+            if (!acpOnly)
+                renderer.WriteWarning("Continuing without ACP. Pass --no-acp to silence this on subsequent runs.");
             await acpHost.DisposeAsync();
             acpHost = null;
             acpCts.Dispose();
@@ -319,7 +323,7 @@ static async Task RunAgentAsync(string? endpoint, string? model, string? workdir
     {
         if (acpHost is null)
         {
-            renderer.WriteError("--acp-only requires the ACP server, but config.AcpServer.Enabled is false.");
+            renderer.WriteError(AcpStartupError.Message(acp.Port, acpStartError));
             return;
         }
 
