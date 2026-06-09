@@ -10,7 +10,7 @@ public static class ConfigLoader
         Action<string>? warn = null)
     {
         var config = new AppConfig();
-        var cwd = workingDirectory ?? Directory.GetCurrentDirectory();
+        var cwd = Path.GetFullPath(workingDirectory ?? Directory.GetCurrentDirectory());
         config.WorkingDirectory = cwd;
 
         config.ModelPresets["qwen"] = new ModelPresetSettings

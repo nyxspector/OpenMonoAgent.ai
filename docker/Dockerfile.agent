@@ -8,7 +8,7 @@
 #   3. Plain `docker run -it openmono/agent` → interactive TUI only.
 #
 # Build from the `public/` directory:
-#   docker build -f public/docker/Dockerfile.agent -t openmono/agent:dev public/
+#   docker build -f public/docker/Dockerfile.agent -t openmono/agent:latest public/
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
