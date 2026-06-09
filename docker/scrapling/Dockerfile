@@ -7,11 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Base libs the browsers need; Playwright pulls the rest via --with-deps below.
 # xvfb provides a virtual display so headed (headless=false) browser launches
-# work in this displayless container — the server is wrapped in xvfb-run below.
-# xauth is required by xvfb-run itself (it generates the X authority cookie);
-# without it the wrapper aborts with "xauth command not found".
+# work in this displayless container — started explicitly in the entrypoint below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget ca-certificates fonts-liberation xvfb xauth \
+        wget ca-certificates fonts-liberation xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,7 +27,10 @@ COPY app.py .
 EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status==200 else 1)"
-# Wrap in xvfb-run so a virtual X display is always available; headless launches
-# ignore it, headed ones render into it. -a picks a free server number.
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x1024x24", \
-     "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000"]
+
+# Start a virtual X display in the background for headed (headless=false) browser
+# launches, then exec the server as PID 1 so signals + the healthcheck work.
+# Headless launches ignore DISPLAY. This replaces the brittle xvfb-run wrapper,
+# which swallowed uvicorn's exit and never bound the port.
+ENV DISPLAY=:99
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & exec uvicorn app:app --host 0.0.0.0 --port 5000"]
