@@ -643,8 +643,8 @@ cmd_status() {
 
         echo -e "${BLUE}── Containers ───────────────────────────────────────${NC}"
         docker ps \
-            --filter "name=docker-llama-server" \
-            --filter "name=docker-agent" \
+            --filter "name=llama-server" \
+            --filter "name=openmono-agent" \
             --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
 
         echo ""

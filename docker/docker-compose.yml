@@ -43,6 +43,7 @@ services:
       start_period: 30s
 
   agent:
+    image: openmono-agent:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.agent
