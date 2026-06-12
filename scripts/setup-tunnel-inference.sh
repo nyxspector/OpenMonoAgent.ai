@@ -20,7 +20,7 @@ RELAY_PUBLIC_HOST="relay.openmonoagent.ai"
 # If the Caddy web gateway is installed, tunnel it instead of llama directly —
 # the single remote port then reaches llama + search + scrape via path routing.
 GATEWAY_PORT="$(grep '^GATEWAY_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)"
-GATEWAY_PORT="${GATEWAY_PORT:-7480}"
+GATEWAY_PORT="${GATEWAY_PORT:-47480}"
 # Tunnel the gateway (which fronts llama + any web services) whenever it's
 # installed; otherwise fall back to tunneling llama-server directly.
 if grep -q '^GATEWAY_ENABLED=true' "$ENV_FILE" 2>/dev/null || grep -qE '^WEB_(SEARCH|SCRAPE)_ENABLED=true' "$ENV_FILE" 2>/dev/null; then

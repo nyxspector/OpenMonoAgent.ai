@@ -447,6 +447,16 @@ if [ "$INSTALL_DOCKER_CE" = true ] || ! command -v docker &>/dev/null; then
     fi
     if command -v systemctl &>/dev/null && systemctl list-unit-files docker.service &>/dev/null 2>&1; then
         run $SUDO systemctl enable --now docker 2>/dev/null || true
+        # Boot persistence: the containers' `restart: always` policy only kicks in
+        # if dockerd itself starts on boot. Verify the unit is actually enabled and
+        # warn loudly if not — a disabled daemon is the usual reason the stack does
+        # not come back after a reboot.
+        if systemctl is-enabled --quiet docker 2>/dev/null; then
+            ok "docker.service enabled — stack will auto-start on boot"
+        else
+            warn "docker.service is NOT enabled on boot; containers won't return after reboot."
+            warn "Enable it with: sudo systemctl enable docker"
+        fi
     fi
 
     # Note: docker group activation is handled by the openmono wrapper after
