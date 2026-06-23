@@ -16,7 +16,9 @@ public sealed class AcpServerSettings
     public bool Enabled { get; set; } = false;
     public int Port { get; set; } = 7475;
     public bool BindAllInterfaces { get; set; } = false;
-    public int SessionTtlHours { get; set; } = 24;
+    // 0 (or negative) means sessions never expire — the default for workspace-level
+    // resume, which keeps every session until the user explicitly deletes it.
+    public int SessionTtlHours { get; set; } = 0;
     public int PendingUserResponseTimeoutMinutes { get; set; } = 10;
 
 

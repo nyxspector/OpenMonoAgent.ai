@@ -1,44 +1,44 @@
 using System.Collections.Concurrent;
-using System.Text.Json.Serialization;
 using OpenMono.Session;
 
 namespace OpenMono.Acp;
 
-
-
-
-
-
+/// <summary>
+/// In-memory live handle for an ACP session. Its durable conversation state
+/// (messages, checkpoints, todos, turn count, model) lives in <see cref="State"/>,
+/// which is persisted/loaded by <c>SessionManager</c> — the single shared store
+/// across the TUI and ACP surfaces. This class adds only the live, non-persisted
+/// concerns: the per-turn lock and the pending-pause / remembered-decision registries.
+/// </summary>
 public sealed class AcpSession
 {
-    public required string Id { get; init; }
-    public required DateTime StartedAt { get; init; }
+    public required SessionState State { get; init; }
+
+    /// <summary>Runtime last-activity marker, used for TTL of live sessions (never expires when TTL ≤ 0).</summary>
     public DateTime LastActivityAt { get; set; }
-    public required string Model { get; init; }
-    public int TurnCount { get; set; }
-    public bool PlanMode { get; set; }
-    public List<TodoItem> Todos { get; init; } = new();
-    public List<Message> Messages { get; init; } = new();
 
+    public string Id => State.Id;
+    public DateTime StartedAt => State.StartedAt;
+    public string Model => State.Model ?? "";
+    public List<TodoItem> Todos => State.Todos;
+    public List<Message> Messages => State.Messages;
 
-    [JsonIgnore]
+    public int TurnCount
+    {
+        get => State.TurnCount;
+        set => State.TurnCount = value;
+    }
+
+    public bool PlanMode
+    {
+        get => State.Meta.PlanMode;
+        set => State.Meta.PlanMode = value;
+    }
+
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
-
-
-
-
-
-
-
-
-    [JsonIgnore]
     private readonly ConcurrentDictionary<string, PendingPause> _pending = new();
-
-    [JsonIgnore]
     private readonly ConcurrentDictionary<string, bool> _rememberedPermissions = new();
-
-    [JsonIgnore]
     private readonly ConcurrentDictionary<string, string> _rememberedUserInputs = new();
 
     public TaskCompletionSource<AcpPauseResponse> RegisterPause(
@@ -56,7 +56,6 @@ public sealed class AcpSession
     public (PendingResponseKind Kind, string ContextKey)? LookupPauseContext(string id)
         => _pending.TryGetValue(id, out var pp) ? (pp.Kind, pp.ContextKey) : null;
 
-    [JsonIgnore]
     public IReadOnlyCollection<string> PendingIds => _pending.Keys.ToArray();
 
     public void CancelAllPending()
@@ -64,12 +63,6 @@ public sealed class AcpSession
         foreach (var kv in _pending) kv.Value.Tcs.TrySetCanceled();
         _pending.Clear();
     }
-
-
-
-
-
-
 
     public void RememberPermission(string contextKey, bool allow)
         => _rememberedPermissions[contextKey] = allow;
@@ -88,11 +81,6 @@ public sealed class AcpSession
         string ContextKey,
         TaskCompletionSource<AcpPauseResponse> Tcs);
 }
-
-
-
-
-
 
 public abstract record AcpPauseResponse;
 

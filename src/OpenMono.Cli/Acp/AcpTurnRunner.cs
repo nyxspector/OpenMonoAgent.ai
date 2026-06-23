@@ -111,33 +111,29 @@ public sealed class AcpTurnRunner : IAcpEventSink
 
     private async Task DriveLoopAsync(CancellationToken ct)
     {
-        var sessionState = BuildSessionState();
+        // Run directly on the session's own SessionState so checkpoints, the cutoff
+        // index, and the TokenTracker accumulate across turns (and are persisted by
+        // the endpoint after each turn) — enabling compaction-aware resume.
+        var sessionState = _acpSession.State;
+        sessionState.Meta.TokenTracker ??= new TokenTracker();
+
         using var loop = _loopFactory.Create(sessionState, sink: this, interaction: _interaction);
 
         try
         {
-
-
-
             await loop.ContinueTurnAsync(ct);
-            SyncBackToAcpSession(sessionState);
             await _writer.WriteEventAsync("done", new { });
         }
         catch (PendingUserResponseException)
         {
-
-
-
-            SyncBackToAcpSession(sessionState);
+            // Turn paused awaiting a client response; state is already mutated in place.
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-
-            SyncBackToAcpSession(sessionState);
+            // Client aborted; partial state is already in place.
         }
         catch (Exception e)
         {
-            SyncBackToAcpSession(sessionState);
             await _writer.WriteEventAsync("error", new { message = e.Message });
         }
     }
@@ -175,28 +171,6 @@ public sealed class AcpTurnRunner : IAcpEventSink
             first = false;
         }
     }
-
-    private SessionState BuildSessionState()
-    {
-        var ss = new SessionState();
-        foreach (var m in _acpSession.Messages) ss.AddMessage(m);
-        ss.TurnCount = _acpSession.TurnCount;
-        ss.Meta.PlanMode = _acpSession.PlanMode;
-        ss.Todos.Clear();
-        foreach (var t in _acpSession.Todos) ss.Todos.Add(t);
-        ss.Meta.TokenTracker ??= new TokenTracker();
-        return ss;
-    }
-
-    private void SyncBackToAcpSession(SessionState ss)
-    {
-        _acpSession.Messages.Clear();
-        _acpSession.Messages.AddRange(ss.Messages);
-        _acpSession.PlanMode = ss.Meta.PlanMode;
-        _acpSession.Todos.Clear();
-        foreach (var t in ss.Todos) _acpSession.Todos.Add(t);
-    }
-
 
 
     public Task OnTextDeltaAsync(string content)
