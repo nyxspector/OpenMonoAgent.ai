@@ -12,6 +12,7 @@ public sealed class GlobTool : ToolBase
     public override bool IsConcurrencySafe => true;
     public override bool IsReadOnly => true;
     public override PermissionLevel DefaultPermission => PermissionLevel.AutoAllow;
+    public override TimeSpan? Timeout => TimeSpan.FromSeconds(120);
 
     protected override SchemaBuilder DefineSchema() => new SchemaBuilder()
         .AddString("pattern", "Glob pattern (e.g. **/*.cs, src/**/*.json)")

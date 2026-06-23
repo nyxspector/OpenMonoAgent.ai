@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using OpenMono.Acp;
+using OpenMono.Utils;
 
 namespace OpenMono.Config;
 
@@ -8,6 +9,7 @@ public sealed class AppConfig
     public LlmConfig Llm { get; set; } = new();
     public WebConfig Web { get; set; } = new();
     public PermissionConfig Permissions { get; set; } = new();
+    public SecretWritePolicy SecretWrites { get; set; } = SecretWritePolicy.Block;
     public HookConfig Hooks { get; set; } = new();
     public PlaybookConfig Playbooks { get; set; } = new();
     public AgentConfig Agents { get; set; } = new();

@@ -9,6 +9,7 @@ public abstract class ToolBase : ITool
     public virtual bool IsConcurrencySafe => false;
     public virtual bool IsReadOnly => false;
     public virtual bool IsDeferred => false;
+    public virtual TimeSpan? Timeout => null;
     public virtual PermissionLevel DefaultPermission => PermissionLevel.Ask;
 
     private JsonElement? _cachedSchema;

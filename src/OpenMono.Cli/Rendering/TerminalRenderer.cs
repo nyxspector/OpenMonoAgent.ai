@@ -346,9 +346,41 @@ public sealed class TerminalRenderer : IRenderer
         });
     }
 
-    public void WriteToolDiff(string diff) { }
+    public void WriteToolDiff(string diff)
+    {
+        if (string.IsNullOrWhiteSpace(diff)) return;
 
-    public void WriteToolContent(string toolName, string filePath, string content) { }
+        foreach (var line in diff.Replace("\r\n", "\n").Split('\n'))
+        {
+            var escaped = Markup.Escape(line);
+            var markup = line switch
+            {
+                _ when line.StartsWith("+++") || line.StartsWith("---") => $"  [dim]{escaped}[/]",
+                _ when line.StartsWith("@@") => $"  [cyan]{escaped}[/]",
+                _ when line.StartsWith('+') => $"  [green]{escaped}[/]",
+                _ when line.StartsWith('-') => $"  [red]{escaped}[/]",
+                _ => $"  [grey]{escaped}[/]",
+            };
+            _console.MarkupLine(markup);
+        }
+    }
+
+    public void WriteToolContent(string toolName, string filePath, string content)
+    {
+        if (string.IsNullOrEmpty(content)) return;
+
+        const int maxLines = 20;
+        var lines = content.Replace("\r\n", "\n").Split('\n');
+
+        _console.MarkupLine($"  [dim]{Markup.Escape(filePath)}[/]");
+
+        var show = Math.Min(lines.Length, maxLines);
+        for (var i = 0; i < show; i++)
+            _console.MarkupLine($"  [grey]{Markup.Escape(lines[i])}[/]");
+
+        if (lines.Length > maxLines)
+            _console.MarkupLine($"  [dim]… {lines.Length - maxLines} more line(s)[/]");
+    }
 
     public void WriteTodos(IReadOnlyList<Session.TodoItem> todos)
     {
