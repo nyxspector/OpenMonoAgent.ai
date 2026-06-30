@@ -6,6 +6,7 @@ namespace OpenMono.Playbooks;
 public sealed class PlaybookLoader
 {
     private readonly List<string> _searchPaths;
+    private readonly Dictionary<string, bool> _pathScope = []; // true = global, false = workspace
     private static readonly IDeserializer YamlDeserializer = new DeserializerBuilder()
         .WithNamingConvention(HyphenatedNamingConvention.Instance)
         .IgnoreUnmatchedProperties()
@@ -13,9 +14,23 @@ public sealed class PlaybookLoader
 
     public PlaybookLoader(IEnumerable<string> searchPaths)
     {
-        _searchPaths = searchPaths
-            .Select(p => p.Replace("~", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)))
-            .ToList();
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var globalBase = Path.Combine(userProfile, ".openmono");
+
+        foreach (var p in searchPaths)
+        {
+            var resolved = p.Replace("~", userProfile);
+            _pathScope.Add(resolved, IsGlobalPath(resolved, globalBase));
+        }
+
+        _searchPaths = _pathScope.Keys.ToList();
+    }
+
+    private static bool IsGlobalPath(string resolvedPath, string globalBase)
+    {
+        var normalizedResolved = Path.GetFullPath(resolvedPath);
+        var normalizedGlobal = Path.GetFullPath(globalBase);
+        return normalizedResolved.StartsWith(normalizedGlobal, StringComparison.Ordinal);
     }
 
     public IReadOnlyList<PlaybookDefinition> LoadAll()
@@ -24,22 +39,40 @@ public sealed class PlaybookLoader
 
         foreach (var basePath in _searchPaths)
         {
-            if (!Directory.Exists(basePath)) continue;
+            if (!Directory.Exists(basePath))
+            {
+                Utils.Log.Debug($"Playbook path does not exist: {basePath}");
+                continue;
+            }
 
-            foreach (var dir in Directory.GetDirectories(basePath))
+            Utils.Log.Debug($"Searching for playbooks in: {basePath}");
+            var dirs = Directory.GetDirectories(basePath);
+            Utils.Log.Debug($"Found {dirs.Length} directories in {basePath}");
+
+            foreach (var dir in dirs)
             {
                 var playbookFile = Path.Combine(dir, "PLAYBOOK.md");
-                if (!File.Exists(playbookFile)) continue;
+                if (!File.Exists(playbookFile))
+                {
+                    Utils.Log.Debug($"No PLAYBOOK.md in {dir}");
+                    continue;
+                }
 
-                var playbook = ParsePlaybook(playbookFile, dir);
-                if (playbook is not null) playbooks.Add(playbook);
+                var scope = _pathScope.TryGetValue(basePath, out var isGlobal) ? (isGlobal ? "global" : "workspace") : "workspace";
+                var playbook = ParsePlaybook(playbookFile, dir, scope);
+                if (playbook is not null)
+                {
+                    Utils.Log.Debug($"Loaded playbook: {playbook.Name} (scope: {scope})");
+                    playbooks.Add(playbook);
+                }
             }
         }
 
+        Utils.Log.Info($"PlaybookLoader: loaded {playbooks.Count} playbooks from {_searchPaths.Count} paths");
         return playbooks;
     }
 
-    private static PlaybookDefinition? ParsePlaybook(string filePath, string baseDir)
+    private static PlaybookDefinition? ParsePlaybook(string filePath, string baseDir, string scope)
     {
         try
         {
@@ -54,6 +87,7 @@ public sealed class PlaybookLoader
                     Name = Path.GetFileName(baseDir),
                     Description = content[..Math.Min(250, content.Length)],
                     BasePath = baseDir,
+                    Scope = scope,
                     RoleDescription = content,
                 };
             }
@@ -69,6 +103,7 @@ public sealed class PlaybookLoader
                 Trigger = ParseEnum<TriggerMode>(GetString(frontmatter, "trigger"), TriggerMode.Manual),
                 TriggerPatterns = GetStringList(frontmatter, "trigger-patterns"),
                 UserInvocable = GetBool(frontmatter, "user-invocable", true),
+                Scope = scope,
                 ArgumentHint = GetString(frontmatter, "argument-hint"),
                 AllowedTools = GetStringList(frontmatter, "allowed-tools") is { Length: > 0 } tools ? tools : ["*"],
                 ContextMode = ParseEnum<ContextMode>(GetString(frontmatter, "context-mode"), ContextMode.Selective),

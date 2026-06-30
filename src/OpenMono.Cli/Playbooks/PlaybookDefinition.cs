@@ -9,6 +9,8 @@ public sealed record PlaybookDefinition
     public TriggerMode Trigger { get; init; } = TriggerMode.Manual;
     public string[] TriggerPatterns { get; init; } = [];
     public bool UserInvocable { get; init; } = true;
+    /// <summary>Either "global" (~/.openmono/playbooks/) or "workspace" (.openmono/playbooks/).</summary>
+    public string? Scope { get; init; }
     public string? ArgumentHint { get; init; }
 
     public Dictionary<string, ParameterDefinition> Parameters { get; init; } = [];

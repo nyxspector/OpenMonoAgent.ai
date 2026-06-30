@@ -1,8 +1,17 @@
 using System.Text.Json;
+using OpenMono.Config;
+using OpenMono.Memory;
+using OpenMono.Playbooks;
 using OpenMono.Session;
 using OpenMono.Utils;
 
 namespace OpenMono.Acp;
+
+internal record SystemPromptContext(
+    AppConfig Config,
+    PlaybookRegistry? PlaybookRegistry = null,
+    MemoryStore? MemoryStore = null,
+    string? CachedPrompt = null);
 
 
 
@@ -31,25 +40,30 @@ public sealed class AcpTurnRunner : IAcpEventSink
     private readonly ConversationLoopFactory _loopFactory;
     private readonly AcpServerSettings _settings;
     private readonly IAcpUserInteraction _interaction;
+    private readonly PlaybookRegistry? _playbookRegistry;
+    private readonly MemoryStore? _memoryStore;
+    private string? _cachedSystemPrompt;
 
     public AcpTurnRunner(
         AcpSession session,
         SseWriter writer,
         ConversationLoopFactory loopFactory,
-        AcpServerSettings settings)
+        AcpServerSettings settings,
+        PlaybookRegistry? playbookRegistry = null,
+        MemoryStore? memoryStore = null)
     {
         _acpSession = session;
         _writer = writer;
         _loopFactory = loopFactory;
         _settings = settings;
+        _playbookRegistry = playbookRegistry;
+        _memoryStore = memoryStore;
         _interaction = new AcpUserInteractionForwarder(session, writer, settings.PendingUserResponseTimeout);
 
         // Log system prompt availability on first turn for this session
         if (session.TurnCount == 0)
         {
-            var promptLength = SystemPrompt.Base.Length;
-            var promptPreview = SystemPrompt.Base.Substring(0, Math.Min(80, SystemPrompt.Base.Length)).Replace("\n", " ");
-            Log.Info($"[OMA_INIT] ACP session {session.Id} initialized. System prompt available: {promptLength} chars. Preview: {promptPreview}...");
+            Log.Info($"[OMA_INIT] ACP session {session.Id} initialized. PlaybookRegistry available: {(playbookRegistry?.All.Count ?? 0)} playbooks. MemoryStore available: {(memoryStore is not null)}");
         }
     }
 
@@ -60,11 +74,22 @@ public sealed class AcpTurnRunner : IAcpEventSink
         // Ensure system prompt is set on first message
         if (_acpSession.Messages.Count == 0 || _acpSession.Messages[0].Role != MessageRole.System)
         {
-            Log.Info($"[OMA_SYSTEMPROMPT] Session {_acpSession.Id}: Adding system prompt ({SystemPrompt.Base.Length} chars). Messages before: {_acpSession.Messages.Count}");
+            // Build the full system prompt with playbooks, memory, and git context
+            if (_cachedSystemPrompt == null)
+            {
+                Log.Info($"[OMA_SYSTEMPROMPT] Building full system prompt for session {_acpSession.Id}");
+                _cachedSystemPrompt = await SystemPrompt.BuildAsync(
+                    _loopFactory.Config,
+                    _memoryStore,
+                    _playbookRegistry);
+                Log.Info($"[OMA_SYSTEMPROMPT] System prompt built: {_cachedSystemPrompt.Length} chars, {(_playbookRegistry?.All.Count ?? 0)} playbooks included");
+            }
+
+            Log.Info($"[OMA_SYSTEMPROMPT] Session {_acpSession.Id}: Adding system prompt ({_cachedSystemPrompt.Length} chars). Messages before: {_acpSession.Messages.Count}");
             _acpSession.Messages.Insert(0, new Message
             {
                 Role = MessageRole.System,
-                Content = SystemPrompt.Base
+                Content = _cachedSystemPrompt
             });
             Log.Info($"[OMA_SYSTEMPROMPT] System prompt added. Messages after: {_acpSession.Messages.Count}. First message is System: {_acpSession.Messages[0].Role == MessageRole.System}");
         }
